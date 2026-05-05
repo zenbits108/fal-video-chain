@@ -1,0 +1,24 @@
+cat << 'EOF' > .gitignore
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# Virtualenv
+.venv/
+
+# Outputs
+outputs/
+*.mp4
+*.png
+*.jsonl
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+EOF

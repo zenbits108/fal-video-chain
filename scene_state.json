@@ -1,0 +1,29 @@
+{
+  "project_style": "Dark art-house science fiction with a restrained cinematic tone, subtle film grain, Kodak 2383 print look, muted teal and amber color grade, realistic physical motion, no glossy CGI look, no cartoon look, no anime look.",
+  "environment": "An impossible ancient alien cathedral interior made of black stone, bronze ribs, cracked obsidian, deep floor seams, massive shadowed arches, faint blue-green bioluminescent glyphs, drifting dust, volumetric haze, and distant architectural depth.",
+  "character": "A lone adult human explorer, physically consistent in every shot: weathered charcoal expedition coat, dark utility pants, leather boots, small backpack, tired cautious posture, slow controlled breathing, no helmet, no armor, no costume changes, holding a brass torch in the right hand.",
+  "lighting": "Low-key torch-lit scene with cold blue-green ambient glow from alien glyphs, deep shadows, soft practical flame flicker, stable exposure, no sudden daylight, no major lighting shift.",
+  "camera": {
+    "shot_size": "medium-wide over-the-shoulder composition from behind the explorer's left side",
+    "lens": "35mm f/2.8",
+    "height": "1.6 meters, eye-level to slightly low angle",
+    "movement": "tripod-stabilized slow dolly forward",
+    "distance": "about half a meter over the entire clip",
+    "speed": "constant slow velocity",
+    "screen_direction": "the explorer moves slowly away from camera toward the deep center of the cathedral",
+    "stabilization": "180-degree shutter equivalent, natural motion blur, film-like cadence, no judder, no strobing, minimal micro-jitter, no handheld shake, no snap zoom, no sudden pan, no sudden tilt, no orbit, no rack focus unless explicitly requested"
+  },
+  "audio": {
+    "ambience": "continuous low-frequency cathedral hum, distant metallic echoes, faint air movement, subtle torch crackle, consistent volume, no sudden silence",
+    "music": "low evolving ambient drone, sparse dark orchestral texture, slow emotional tension, same sonic palette across all clips",
+    "dialogue_style": "If dialogue appears, the explorer speaks in a low tired voice with restrained pacing, natural lip-sync, no exaggerated performance.",
+    "style_fingerprint": "Every clip must look like the same camera, same film stock, same colorist, same lens package, same production design, same exposure level, same grain pattern, same art-house sci-fi film. Do not reinterpret the style between shots."
+  },
+  "sound_bible": {
+  "ambience_loop": "continuous low cathedral sub-bass hum, faint torch crackle, distant metallic air movement, low stone resonance",
+  "music_identity": "same slow dark ambient drone, no melody change, no percussion, no sudden orchestral swell",
+  "mix_rules": "ambience slightly louder than music, no sudden silence, no new instruments, no random voices"
+  },
+  "anchors": "Stable foreground anchors: black stone pillar fragments near the frame edge, cracked obsidian floor lines, blue-green glyph glow along the floor center. Preserve these anchors for parallax continuity."
+}
+
