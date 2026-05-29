@@ -1,313 +1,191 @@
-# FAL LTX Video Chain Generator
+# FAL Video Chain Generator
 
-A Python-based video generation pipeline using FAL.AI and LTX 2.3 that creates **continuous, chained video clips** with persistent visual style, camera motion, and audio identity.
-
-This system solves the core limitation of LTX models:
-
-> LTX has no memory between shots.
-
-To compensate, this tool rebuilds **every prompt as a full cinematic shot** using a persistent scene state, continuity rules, and controlled transitions.
+A Python pipeline that generates long, continuous video from a sequence of action prompts using FAL.AI video models. Each clip is seeded from the last frame of the previous one, with a persistent scene state rebuilt into every prompt to maintain visual and audio consistency across the chain.
 
 ---
 
-# 🚀 Features
+## How it works
 
-* 🔁 Infinite or fixed-length video chaining
-* 🎬 Persistent **scene state** (style, character, environment)
-* 🎥 Locked **camera motion and lens grammar**
-* 🔊 Consistent **audio and sound design**
-* 🧠 Prompt reconstruction with **continuity memory**
-* ✂️ Intelligent **transition handling**
-* 📁 Local storage of clips, frames, prompts, and logs
+LTX and other FAL models have no memory between generations. This tool compensates by rebuilding every prompt from scratch using:
 
----
+```
+scene_state.json + style_header + transition + recent_history + action + style_footer → full prompt
+→ FAL API → clip → extract last frame → upload → repeat
+```
 
-# 📦 Requirements
-
-* Linux Mint 22 (or similar Linux)
-* Python 3.13
-* FFmpeg
-* FAL API key
+Your prompts describe **action only**. Everything else — style, character, camera, lighting, audio — is owned by `scene_state.json` and injected automatically into every generation.
 
 ---
 
-# ⚙️ Installation
+## Requirements
+
+- Python 3.13
+- FFmpeg (`sudo apt install -y ffmpeg`)
+- FAL API key
+
+---
+
+## Installation
 
 ```bash
-sudo apt update
-sudo apt install -y ffmpeg python3.13-venv
-
-mkdir -p ~/fal_video_chain
-cd ~/fal_video_chain
-
 python3.13 -m venv .venv
 source .venv/bin/activate
-
 pip install fal-client requests
-
-export FAL_KEY="YOUR_API_KEY"
+export FAL_KEY="your-key"
 ```
 
 ---
 
-# 🧠 Core Concept
+## Quick start
 
-This is **not a prompt chain**.
-
-This is a **shot engine**.
-
-Each clip is generated using:
-
-```
-scene_state + transition + action + continuity rules → full prompt
-```
-
-Every prompt is rebuilt from scratch to simulate memory.
-
----
-
-# 📁 Project Structure
-
-```
-fal_video_chain/
-├── fal_video_chain.py
-├── prompts.txt
-├── scene_state.json
-├── style_header.txt
-├── style_footer.txt
-├── negative_prompt.txt
-└── outputs/
-    ├── clips/
-    ├── frames/
-    ├── logs/
-    ├── full_prompts/
-    └── manifest.jsonl
-```
-
----
-
-# ▶️ Usage
-
-## 1. Generate default config files
+Generate default config files on first run:
 
 ```bash
 python fal_video_chain.py --write-default-files
 ```
 
-## 2. Run the generator
+Run a 10-clip chain and join them into one video:
 
 ```bash
 python fal_video_chain.py \
   --first-text-to-video \
   --prompts-file prompts.txt \
-  --duration 6 \
-  --fps 25 \
-  --iterations 10
+  --iterations 10 \
+  --concat
+```
+
+Preview what will be sent to the API without spending credits:
+
+```bash
+python fal_video_chain.py \
+  --first-text-to-video \
+  --prompts-file prompts.txt \
+  --iterations 3 \
+  --dry-run
 ```
 
 ---
 
-# ✍️ How Prompts Work (IMPORTANT)
+## Model selection
 
-## ❗ Prompts are NOT full descriptions
+Use `--model` to switch between model families. The correct payload schema is applied automatically.
 
-Your prompts should describe **ONLY the action**, not style or camera.
+```bash
+python fal_video_chain.py --model kling-v3 --first-text-to-video --prompts-file prompts.txt --iterations 5 --concat
+```
 
-### ❌ Bad Prompt
+| Preset | Models |
+|---|---|
+| `ltx` | LTX 2.3 Fast (default) |
+| `ltx-pro` | LTX 2.3 Pro |
+| `kling-v3` | Kling v3 Pro |
+| `kling-v3-std` | Kling v3 Standard |
+| `seedance-2` | Seedance 2.0 |
+| `seedance-2-fast` | Seedance 2.0 Fast |
+| `wan-2.7` | Wan 2.7 |
 
+For raw endpoint IDs, use `--image-model` and `--text-model` directly.
+
+List all currently active FAL video models:
+
+```bash
+python fal_video_chain.py --list-models
+python fal_video_chain.py --list-models image-to-video
+python fal_video_chain.py --list-models text-to-video
+```
+
+---
+
+## Prompts
+
+Prompts in `prompts.txt` describe **action only** — not style, camera, or environment. One line per clip. Lines cycle if there are fewer prompts than `--iterations`.
+
+**Wrong** — describes style:
 ```
 A cinematic shot of a glowing alien cathedral with dramatic lighting
 ```
 
-### ✅ Good Prompt
+**Right** — describes only what changes:
+```
+The explorer kneels and touches the glowing symbols on the floor
+```
 
-```
-The explorer slows down and raises the torch toward the glowing symbols on the floor
-```
+### Transition keywords
+
+The engine detects keywords in each prompt and injects the right transition instruction:
+
+| Keyword | Effect |
+|---|---|
+| *(default)* | Seamless continuation from previous frame |
+| `new angle`, `close-up`, `side view`, `overhead` | Match cut to new camera angle |
+| `new scene`, `cut to`, `fade to`, `another chamber` | Cinematic fade to new location |
 
 ---
 
-## 🎬 Prompt Responsibilities
+## Configuration files
 
-| Element    | Controlled By      |
-| ---------- | ------------------ |
-| Style      | `scene_state.json` |
-| Character  | `scene_state.json` |
-| Lighting   | `scene_state.json` |
-| Camera     | `scene_state.json` |
-| Audio      | `scene_state.json` |
-| Action     | `prompts.txt`      |
-| Continuity | Engine logic       |
+| File | Purpose |
+|---|---|
+| `scene_state.json` | Visual style, character, environment, camera, audio — injected into every prompt |
+| `style_header.txt` | Text prepended to every prompt |
+| `style_footer.txt` | Text appended to every prompt |
+| `negative_prompt.txt` | Passed as `negative_prompt` to the API |
+| `prompts.txt` | Action-only lines, one per clip |
 
 ---
 
-# 🔁 Prompt Chaining Behavior
-
-Each iteration:
-
-1. Takes last frame of previous video
-2. Uploads it to FAL
-3. Builds a **full cinematic prompt**
-4. Injects:
-
-   * Scene state
-   * Camera lock
-   * Audio consistency
-   * Recent shot memory
-   * Transition rules
-5. Generates next clip
-
----
-
-# 🎞️ Transitions
-
-The system automatically detects transitions:
-
-### Continuous shot (default)
+## All options
 
 ```
-Continue seamlessly from previous frame, no cut
-```
-
-### New angle
-
-Use keywords:
-
-```
-new angle
-close-up
-side view
-```
-
-### New scene
-
-Use keywords:
-
-```
-new scene
-cut to
-fade to
-another chamber
+--prompts-file FILE     Text file with one action prompt per line
+--prompt TEXT           Single prompt reused every clip
+--iterations N          Number of clips (0 = infinite)
+--duration SECS         Clip duration: 6, 8, or 10 (LTX); 3–15 (others)
+--fps N                 Frame rate: 24, 25, 48, or 50 (LTX only)
+--resolution RES        1080p (default), 720p
+--no-audio              Disable audio generation
+--model PRESET          Model preset (see table above)
+--image-model ID        Raw FAL endpoint for image-to-video
+--text-model ID         Raw FAL endpoint for text-to-video
+--first-text-to-video   Generate clip 1 from text; subsequent clips from last frame
+--initial-image PATH    Use a local image as the first frame instead
+--concat                Join all clips into full_video.mp4 after the run
+--dry-run               Print payloads without calling the API
+--list-models [CAT]     List active FAL video models and exit
+--outdir DIR            Output directory (default: outputs)
+--history-depth N       Number of recent prompts injected as story memory (default: 3)
+--max-prompt-chars N    Prompt character limit (default: 5000 for LTX/Wan, 8000 for others)
+--seed N                Fixed seed for reproducibility
+--sleep SECS            Pause between iterations (default: 2.0)
+--scene-state-file      Path to scene_state.json
+--header-file           Path to style_header.txt
+--footer-file           Path to style_footer.txt
+--negative-file         Path to negative_prompt.txt
+--write-default-files   Write default config files and exit
+--overwrite-default-files  Overwrite existing config files
 ```
 
 ---
 
-# 🧱 Scene State (Critical)
-
-The `scene_state.json` file defines:
-
-* Visual style
-* Environment
-* Character identity
-* Camera behavior
-* Audio design
-* Lighting rules
-* Spatial anchors
-
-This file ensures consistency across all clips.
-
----
-
-# 🔊 Audio Consistency
-
-The system maintains:
-
-* Continuous ambient sound
-* Stable music identity
-* Consistent dialogue tone
-
-Avoid describing audio in prompts unless necessary.
-
----
-
-# 📌 Best Practices
-
-## Keep prompts simple
-
-Focus only on what changes:
+## Output structure
 
 ```
-The explorer kneels and touches the glowing floor
+outputs/
+├── clips/          clip_0001.mp4, clip_0002.mp4, ...
+├── frames/         last_frame_0001.png, last_frame_0002.png, ...
+├── full_prompts/   prompt_0001.txt, prompt_0002.txt, ...
+├── logs/           result_0001.json, result_0002.json, ...
+├── manifest.jsonl  one JSON record per clip
+└── full_video.mp4  concatenated result (with --concat)
 ```
 
 ---
 
-## Maintain slow motion
+## Known limitations
 
-LTX performs best with:
+- Minor lighting drift across clips is expected with current models
+- Character appearance may shift slightly over long chains
+- Camera may micro-jitter despite stabilization instructions
+- Audio continuity degrades over many clips
 
-* Slow camera movement
-* Minimal action per clip
-* Continuous motion
-
----
-
-## Avoid conflicting instructions
-
-Do NOT override:
-
-* Camera movement
-* Lighting style
-* Character design
-
----
-
-## Use anchors
-
-Stable objects improve continuity:
-
-* pillars
-* floor cracks
-* light sources
-
----
-
-# ⚠️ Known Limitations
-
-Even with all controls:
-
-* Minor lighting drift may occur
-* Camera may slightly jitter
-* Character may subtly morph over time
-* Audio can shift slightly
-
-This is expected behavior with current models.
-
----
-
-# 🧪 Tips for Better Results
-
-* Use **6-second clips** for stability
-* Use **25 fps** for smooth motion
-* Keep **action minimal per shot**
-* Avoid rapid scene changes
-* Let the system control style
-
----
-
-# 📊 Output
-
-Each run generates:
-
-* `.mp4` video clips
-* Last-frame `.png` images
-* Full prompts per iteration
-* JSON logs
-* Manifest file
-
----
-
-# 🧠 Summary
-
-To get consistent results:
-
-* Treat prompts as **actions, not descriptions**
-* Let the engine control everything else
-* Think in **shots, not scenes**
-* Build continuity through repetition
-
----
-
-# License
-
-Use at your own risk. The model will still occasionally hallucinate like a sleep-deprived film student.
+Use 6-second clips, keep action minimal per shot, and avoid rapid scene changes for best results.

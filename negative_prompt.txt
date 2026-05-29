@@ -1,1 +1,8 @@
-subtitle, caption, text, watermark, logo, blurry, overexposed, low contrast, flickering, distorted proportions, unnatural skin tones, extra limbs, disfigured hands, mismatched motion, silent or muted audio, distorted voice, echo, background noise, off-sync audio, jittery movement, awkward pauses, incorrect timing, unnatural transitions, AI artifacts, style drift, costume drift, camera reset, subject replacement, random new characters, random new props
+subtitle, caption, text, watermark, logo, blurry, overexposed, low contrast, flickering,
+distorted proportions, unnatural skin tones, extra limbs, disfigured hands, mismatched motion,
+silent or muted audio, distorted voice, echo, background noise, off-sync audio, jittery movement,
+awkward pauses, incorrect timing, unnatural transitions, AI artifacts, style drift, costume drift,
+camera reset, subject replacement, random new characters, random new props, whip pan, snap zoom,
+sudden orbit, sudden tilt, sudden pan, handheld shake, jump cut, reversed camera direction,
+speed ramp, fast camera movement, aggressive parallax warp, daylight shift, new costume,
+face change, modern UI, hologram text, captions

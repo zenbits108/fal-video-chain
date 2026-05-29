@@ -38,6 +38,18 @@ DEFAULT_TEXT_TO_VIDEO_MODEL = "fal-ai/ltx-2.3/text-to-video/fast"
 VALID_DURATIONS = {6, 8, 10}
 VALID_FPS = {24, 25, 48, 50}
 
+# (text_model, image_model, payload_style)
+# Payload styles: "ltx" | "kling" | "seedance" | "wan"
+MODEL_PRESETS: dict[str, tuple[str, str, str]] = {
+    "ltx":              ("fal-ai/ltx-2.3/text-to-video/fast",            "fal-ai/ltx-2.3/image-to-video/fast",            "ltx"),
+    "ltx-pro":          ("fal-ai/ltx-2.3/text-to-video",                 "fal-ai/ltx-2.3/image-to-video",                 "ltx"),
+    "kling-v3":         ("fal-ai/kling-video/v3/pro/text-to-video",      "fal-ai/kling-video/v3/pro/image-to-video",      "kling"),
+    "kling-v3-std":     ("fal-ai/kling-video/v3/standard/text-to-video", "fal-ai/kling-video/v3/standard/image-to-video", "kling"),
+    "seedance-2":       ("bytedance/seedance-2.0/text-to-video",         "bytedance/seedance-2.0/image-to-video",         "seedance"),
+    "seedance-2-fast":  ("bytedance/seedance-2.0/fast/text-to-video",    "bytedance/seedance-2.0/fast/image-to-video",    "seedance"),
+    "wan-2.7":          ("fal-ai/wan/v2.7/text-to-video",                "fal-ai/wan/v2.7/image-to-video",               "wan"),
+}
+
 
 DEFAULT_SCENE_STATE: dict[str, Any] = {
     "project_style": (
@@ -111,10 +123,39 @@ def die(msg: str) -> None:
     sys.exit(1)
 
 
-def run(cmd: list[str]) -> None:
+def list_models(category: str | None = None) -> None:
+    categories = [category] if category else ["text-to-video", "image-to-video"]
+    api_key = os.environ.get("FAL_KEY", "")
+    headers = {"Authorization": f"Key {api_key}"} if api_key else {}
+
+    for cat in categories:
+        params = {"category": cat, "status": "active", "limit": 100}
+        resp = requests.get("https://api.fal.ai/v1/models", params=params, headers=headers, timeout=30)
+        resp.raise_for_status()
+        models = resp.json().get("models", [])
+
+        print(f"\n{'─' * 80}")
+        print(f"  {cat.upper()}  ({len(models)} models)")
+        print(f"{'─' * 80}")
+        print(f"  {'ENDPOINT ID':<55} {'DISPLAY NAME'}")
+        print(f"  {'─' * 54} {'─' * 22}")
+        for m in models:
+            eid = m["endpoint_id"]
+            name = m["metadata"].get("display_name", "")
+            tags = m["metadata"].get("tags", [])
+            tag_str = f"  [{', '.join(tags)}]" if tags else ""
+            print(f"  {eid:<55} {name}{tag_str}")
+
+
+def run(cmd: list[str], quiet: bool = False) -> None:
     print(" ".join(cmd))
     try:
-        subprocess.run(cmd, check=True)
+        subprocess.run(
+            cmd,
+            check=True,
+            stdout=subprocess.DEVNULL if quiet else None,
+            stderr=subprocess.DEVNULL if quiet else None,
+        )
     except subprocess.CalledProcessError as exc:
         die(f"Command failed with exit code {exc.returncode}: {' '.join(cmd)}")
 
@@ -131,11 +172,12 @@ def require_ffmpeg() -> None:
         die("ffmpeg is not available. Install it with: sudo apt install -y ffmpeg")
 
 
-def validate_generation_args(duration: int, fps: int) -> None:
-    if duration not in VALID_DURATIONS:
-        die(f"Invalid --duration {duration}. Expected one of: {sorted(VALID_DURATIONS)}")
-    if fps not in VALID_FPS:
-        die(f"Invalid --fps {fps}. Expected one of: {sorted(VALID_FPS)}")
+def validate_generation_args(duration: int, fps: int, payload_style: str = "ltx") -> None:
+    if payload_style == "ltx":
+        if duration not in VALID_DURATIONS:
+            die(f"Invalid --duration {duration} for LTX. Expected one of: {sorted(VALID_DURATIONS)}")
+        if fps not in VALID_FPS:
+            die(f"Invalid --fps {fps} for LTX. Expected one of: {sorted(VALID_FPS)}")
 
 
 def read_text_file(path: str | None, default: str = "") -> str:
@@ -192,7 +234,7 @@ def extract_last_frame(video_path: Path, frame_path: Path) -> None:
         "-update", "1",
         "-q:v", "1",
         str(frame_path),
-    ])
+    ], quiet=True)
 
 
 def get_video_url(result: dict[str, Any]) -> str:
@@ -321,12 +363,13 @@ def classify_transition(raw_prompt: str, iteration: int) -> str:
 def format_scene_state(state: dict[str, Any]) -> str:
     camera = state.get("camera", {})
     audio = state.get("audio", {})
-    sound_bible = state.get("sound_bible", {})  # FIX
+    sound_bible = state.get("sound_bible", audio.get("sound_bible", {}))
+    style_fingerprint = state.get("style_fingerprint", audio.get("style_fingerprint", ""))
 
     return f"""
 PERSISTENT SCENE STATE:
 Project style: {state.get("project_style", "")}
-Style fingerprint: {state.get("style_fingerprint", "")}
+Style fingerprint: {style_fingerprint}
 Environment: {state.get("environment", "")}
 Character continuity: {state.get("character", "")}
 Lighting continuity: {state.get("lighting", "")}
@@ -406,7 +449,7 @@ No sudden music genre change. No sudden silence. No random voices.
     if len(prompt) <= max_chars:
         return prompt
 
-    # Trim recent memory first.
+    # Drop recent memory and tighten execution blocks; always keep the footer.
     prompt = f"""
 {extra_header}
 
@@ -433,7 +476,14 @@ Maintain the same ambient sound, music style, and dialogue tone.
     if len(prompt) <= max_chars:
         return prompt
 
-    return prompt[:max_chars]
+    # Last resort: keep header + action + footer, trim the scene state from the middle.
+    fixed_parts = " ".join(f"{extra_header} CURRENT SHOT ACTION: {raw_action} {extra_footer}".split())
+    if len(fixed_parts) >= max_chars:
+        return fixed_parts[:max_chars]
+
+    budget = max_chars - len(fixed_parts) - 1
+    trimmed_state = " ".join(scene_state_text.split())[:budget]
+    return " ".join(f"{extra_header} {trimmed_state} CURRENT SHOT ACTION: {raw_action} {extra_footer}".split())
 
 
 def make_payload(
@@ -445,6 +495,26 @@ def make_payload(
     generate_audio: bool,
     negative_prompt: str = "",
     seed: int | None = None,
+    payload_style: str = "ltx",
+) -> dict[str, Any]:
+    if payload_style == "kling":
+        return _make_kling_payload(prompt, duration, image_url, generate_audio, negative_prompt, seed)
+    if payload_style == "seedance":
+        return _make_seedance_payload(prompt, duration, image_url, resolution, generate_audio, seed)
+    if payload_style == "wan":
+        return _make_wan_payload(prompt, duration, image_url, resolution, negative_prompt, seed)
+    return _make_ltx_payload(prompt, duration, image_url, resolution, fps, generate_audio, negative_prompt, seed)
+
+
+def _make_ltx_payload(
+    prompt: str,
+    duration: int,
+    image_url: str | None,
+    resolution: str,
+    fps: int,
+    generate_audio: bool,
+    negative_prompt: str,
+    seed: int | None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "prompt": prompt,
@@ -453,22 +523,113 @@ def make_payload(
         "fps": fps,
         "generate_audio": generate_audio,
     }
-
     if negative_prompt:
         payload["negative_prompt"] = negative_prompt
-
     if seed is not None:
         payload["seed"] = seed
-
     if image_url:
         payload["image_url"] = image_url
+    return payload
 
+
+def _make_kling_payload(
+    prompt: str,
+    duration: int,
+    image_url: str | None,
+    generate_audio: bool,
+    negative_prompt: str,
+    seed: int | None,
+) -> dict[str, Any]:
+    # Kling uses string duration, aspect_ratio, start_image_url (not image_url)
+    payload: dict[str, Any] = {
+        "prompt": prompt,
+        "duration": str(duration),
+        "aspect_ratio": "16:9",
+        "generate_audio": generate_audio,
+    }
+    if negative_prompt:
+        payload["negative_prompt"] = negative_prompt
+    if seed is not None:
+        payload["seed"] = seed
+    if image_url:
+        payload["start_image_url"] = image_url
+    return payload
+
+
+def _make_seedance_payload(
+    prompt: str,
+    duration: int,
+    image_url: str | None,
+    resolution: str,
+    generate_audio: bool,
+    seed: int | None,
+) -> dict[str, Any]:
+    # Seedance uses string duration, aspect_ratio; no fps, no negative_prompt
+    payload: dict[str, Any] = {
+        "prompt": prompt,
+        "duration": str(duration),
+        "aspect_ratio": "16:9",
+        "resolution": resolution,
+        "generate_audio": generate_audio,
+    }
+    if seed is not None:
+        payload["seed"] = seed
+    if image_url:
+        payload["image_url"] = image_url
+    return payload
+
+
+def _make_wan_payload(
+    prompt: str,
+    duration: int,
+    image_url: str | None,
+    resolution: str,
+    negative_prompt: str,
+    seed: int | None,
+) -> dict[str, Any]:
+    # Wan uses int duration, no fps, no generate_audio; negative_prompt max 500 chars
+    payload: dict[str, Any] = {
+        "prompt": prompt,
+        "duration": duration,
+        "resolution": resolution,
+        "enable_prompt_expansion": False,
+    }
+    if negative_prompt:
+        payload["negative_prompt"] = negative_prompt[:500]
+    if seed is not None:
+        payload["seed"] = seed
+    if image_url:
+        payload["image_url"] = image_url
     return payload
 
 
 def append_manifest(manifest_path: Path, record: dict[str, Any]) -> None:
     with manifest_path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def concat_clips(clips_dir: Path, outdir: Path) -> None:
+    clips = sorted(clips_dir.glob("clip_*.mp4"))
+    if not clips:
+        print("\nNo clips found to concatenate.")
+        return
+
+    concat_list = outdir / "concat_list.txt"
+    concat_list.write_text(
+        "\n".join(f"file '{c.resolve()}'" for c in clips) + "\n",
+        encoding="utf-8",
+    )
+    out_path = outdir / "full_video.mp4"
+    print(f"\nConcatenating {len(clips)} clips into {out_path}")
+    run([
+        "ffmpeg", "-y",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", str(concat_list),
+        "-c", "copy",
+        str(out_path),
+    ], quiet=True)
+    print(f"Concatenated video: {out_path}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -486,6 +647,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-audio", action="store_true")
 
     parser.add_argument("--initial-image", help="Optional local image path for first image-to-video clip.")
+    parser.add_argument(
+        "--model",
+        default=None,
+        help=f"Model preset shorthand. One of: {', '.join(MODEL_PRESETS)}. "
+             "Overrides --image-model and --text-model and selects the correct payload schema.",
+    )
     parser.add_argument("--image-model", default=DEFAULT_IMAGE_TO_VIDEO_MODEL)
     parser.add_argument("--text-model", default=DEFAULT_TEXT_TO_VIDEO_MODEL)
     parser.add_argument("--first-text-to-video", action="store_true")
@@ -496,9 +663,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--negative-file", default="negative_prompt.txt")
 
     parser.add_argument("--history-depth", type=int, default=3)
-    parser.add_argument("--max-prompt-chars", type=int, default=5000)
+    parser.add_argument("--max-prompt-chars", type=int, default=None,
+                        help="Max prompt length in characters. Defaults to 5000 for LTX/Wan, 8000 for others.")
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--sleep", type=float, default=2.0)
+
+    parser.add_argument("--dry-run", action="store_true", help="Print the payload for each iteration without calling the API.")
+    parser.add_argument("--concat", action="store_true", help="Concatenate all clips into a single video after the run completes.")
+
+    parser.add_argument(
+        "--list-models",
+        nargs="?",
+        const="all",
+        metavar="CATEGORY",
+        help="List active FAL video models and exit. Optionally filter: text-to-video or image-to-video.",
+    )
 
     parser.add_argument("--write-default-files", action="store_true")
     parser.add_argument("--overwrite-default-files", action="store_true")
@@ -508,6 +687,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
+    if args.list_models:
+        cat = None if args.list_models == "all" else args.list_models
+        list_models(cat)
+        return
 
     if args.write_default_files:
         write_default_file(
@@ -533,14 +717,30 @@ def main() -> None:
         print("Default files are ready.")
         return
 
-    if fal_client is None:
-        die("fal-client is not installed. Run: pip install fal-client requests")
+    if not args.dry_run:
+        if fal_client is None:
+            die("fal-client is not installed. Run: pip install fal-client requests")
 
-    if not os.environ.get("FAL_KEY"):
-        die("FAL_KEY is not set. Run: export FAL_KEY='your-key'")
+        if not os.environ.get("FAL_KEY"):
+            die("FAL_KEY is not set. Run: export FAL_KEY='your-key'")
+
+    # Resolve --model preset into endpoints + payload style.
+    payload_style = "ltx"
+    if args.model:
+        if args.model not in MODEL_PRESETS:
+            die(f"Unknown --model '{args.model}'. Valid presets: {', '.join(MODEL_PRESETS)}")
+        text_model, image_model, payload_style = MODEL_PRESETS[args.model]
+        args.text_model = text_model
+        args.image_model = image_model
+        print(f"Model preset: {args.model}  (style={payload_style})")
+        print(f"  text:  {args.text_model}")
+        print(f"  image: {args.image_model}")
+
+    if args.max_prompt_chars is None:
+        args.max_prompt_chars = 5000 if payload_style in ("ltx", "wan") else 8000
 
     require_ffmpeg()
-    validate_generation_args(args.duration, args.fps)
+    validate_generation_args(args.duration, args.fps, payload_style)
 
     outdir = Path(args.outdir)
     clips_dir = outdir / "clips"
@@ -610,9 +810,10 @@ def main() -> None:
                 generate_audio=generate_audio,
                 negative_prompt=negative_prompt,
                 seed=args.seed,
+                payload_style=payload_style,
             )
         else:
-            if not image_url:
+            if not image_url and not args.dry_run:
                 die("No image_url available. Use --initial-image or --first-text-to-video.")
 
             model = args.image_model
@@ -625,12 +826,21 @@ def main() -> None:
                 generate_audio=generate_audio,
                 negative_prompt=negative_prompt,
                 seed=args.seed,
+                payload_style=payload_style,
             )
 
-        print(f"\n=== ITERATION {i} ===")
+        label = f"{i}/{total}" if total else str(i)
+        print(f"\n=== ITERATION {label} ===")
         print(f"Raw action: {raw_action}")
         print(f"Transition: {transition}")
+        print(f"Prompt chars: {len(full_prompt)}")
         print(f"Full prompt saved to: {full_prompt_path}")
+
+        if args.dry_run:
+            print("\n[DRY RUN] Payload:")
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+            i += 1
+            continue
 
         result = submit_fal(model, payload)
 
@@ -678,6 +888,9 @@ def main() -> None:
 
         i += 1
         time.sleep(args.sleep)
+
+    if args.concat and not args.dry_run:
+        concat_clips(clips_dir, outdir)
 
     print("\nDone. The machine has eaten enough frames for now.")
 
