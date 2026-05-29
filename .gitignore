@@ -1,4 +1,3 @@
-cat << 'EOF' > .gitignore
 # Python
 __pycache__/
 *.pyc
@@ -10,7 +9,7 @@ __pycache__/
 .venv/
 
 # Outputs
-outputs/
+outputs*/
 *.mp4
 *.png
 *.jsonl
@@ -21,4 +20,3 @@ Thumbs.db
 
 # Env
 .env
-EOF
