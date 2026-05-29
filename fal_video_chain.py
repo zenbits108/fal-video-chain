@@ -310,51 +310,58 @@ def load_prompts(args: argparse.Namespace) -> list[str]:
     die("Provide --prompt or --prompts-file.")
 
 
-def classify_transition(raw_prompt: str, iteration: int) -> str:
+TRANSITION_CONTINUE = "continue"
+TRANSITION_NEW_ANGLE = "new_angle"
+TRANSITION_NEW_SCENE = "new_scene"
+TRANSITION_OPENING = "opening"
+
+
+def classify_transition(raw_prompt: str, iteration: int, prompt_history: list[str]) -> tuple[str, str]:
+    """Return (transition_type, transition_instruction).
+
+    transition_type controls whether to pass image_url to the model:
+    - "continue"   → seed from last frame (seamless take)
+    - "new_angle"  → no seed frame; model generates the new angle freely
+    - "new_scene"  → no seed frame; model generates the new location freely
+    - "opening"    → no seed frame; first clip
+    """
     text = raw_prompt.lower()
 
     if iteration == 1:
-        return (
+        return TRANSITION_OPENING, (
             "Opening cinematic shot. Establish the explorer already inside the alien cathedral. "
             "Begin with a stable slow dolly forward."
         )
 
     new_scene_words = [
-        "new scene",
-        "new location",
-        "cut to",
-        "fade to",
-        "transition to",
-        "outside",
-        "different room",
-        "another chamber",
+        "new scene", "new location", "cut to", "fade to",
+        "transition to", "outside", "different room", "another chamber",
     ]
 
     new_angle_words = [
-        "new angle",
-        "side view",
-        "close-up",
-        "close up",
-        "overhead",
-        "reverse angle",
-        "profile shot",
-        "front view",
+        "new angle", "side view", "close-up", "close up",
+        "overhead", "reverse angle", "profile shot", "front view",
     ]
 
+    prev_shot = prompt_history[-1] if prompt_history else ""
+
     if any(word in text for word in new_scene_words):
-        return (
-            "Slow cinematic fade transition into the new location while preserving the same character, "
-            "costume, lighting style, sound palette, and art-house visual grammar. After the fade, resume "
-            "a stable slow dolly."
+        prev_context = f" The previous shot showed: {prev_shot}." if prev_shot else ""
+        return TRANSITION_NEW_SCENE, (
+            f"Slow cinematic fade transition into the new location.{prev_context} "
+            "Preserve the same character, costume, lighting style, sound palette, and art-house visual grammar. "
+            "After the fade, resume a stable slow dolly."
         )
 
     if any(word in text for word in new_angle_words):
-        return (
-            "Match cut to the new camera angle while preserving the explorer's motion direction, timing, "
-            "costume, lighting, lens feel, and sound continuity. The cut is editorially clean, not chaotic."
+        prev_context = f" The previous shot showed: {prev_shot}." if prev_shot else ""
+        return TRANSITION_NEW_ANGLE, (
+            f"Match cut to the new camera angle.{prev_context} "
+            "The character, costume, lighting, environment, and sound are identical to the previous shot — "
+            "only the camera angle changes. The cut is editorially clean, not chaotic."
         )
 
-    return (
+    return TRANSITION_CONTINUE, (
         "Continue seamlessly from the supplied first frame, no cut, no camera reset, no direction reversal. "
         "This is the next few seconds of the same unbroken take."
     )
@@ -476,14 +483,20 @@ Maintain the same ambient sound, music style, and dialogue tone.
     if len(prompt) <= max_chars:
         return prompt
 
-    # Last resort: keep header + action + footer, trim the scene state from the middle.
-    fixed_parts = " ".join(f"{extra_header} CURRENT SHOT ACTION: {raw_action} {extra_footer}".split())
+    # Last resort: transition + action + footer are non-negotiable; trim scene state to fit.
+    fixed_parts = " ".join(
+        f"{extra_header} TRANSITION / EDITING: {transition} "
+        f"CURRENT SHOT ACTION: {raw_action} {extra_footer}".split()
+    )
     if len(fixed_parts) >= max_chars:
         return fixed_parts[:max_chars]
 
     budget = max_chars - len(fixed_parts) - 1
     trimmed_state = " ".join(scene_state_text.split())[:budget]
-    return " ".join(f"{extra_header} {trimmed_state} CURRENT SHOT ACTION: {raw_action} {extra_footer}".split())
+    return " ".join(
+        f"{extra_header} {trimmed_state} TRANSITION / EDITING: {transition} "
+        f"CURRENT SHOT ACTION: {raw_action} {extra_footer}".split()
+    )
 
 
 def make_payload(
@@ -783,7 +796,7 @@ def main() -> None:
             break
 
         raw_action = prompts[(i - 1) % len(prompts)]
-        transition = classify_transition(raw_action, i)
+        transition_type, transition = classify_transition(raw_action, i, prompt_history)
 
         full_prompt = build_shot_prompt(
             state=scene_state,
@@ -799,46 +812,44 @@ def main() -> None:
         full_prompt_path = prompts_dir / f"prompt_{i:04d}.txt"
         full_prompt_path.write_text(full_prompt + "\n", encoding="utf-8")
 
-        if i == 1 and args.first_text_to_video and not image_url:
-            model = args.text_model
-            payload = make_payload(
-                prompt=full_prompt,
-                duration=args.duration,
-                image_url=None,
-                resolution=args.resolution,
-                fps=args.fps,
-                generate_audio=generate_audio,
-                negative_prompt=negative_prompt,
-                seed=args.seed,
-                payload_style=payload_style,
-            )
-        else:
-            if not image_url and not args.dry_run:
-                die("No image_url available. Use --initial-image or --first-text-to-video.")
+        # Angle/scene cuts generate freely without a seed frame so the model
+        # isn't anchored to the previous wide composition.
+        use_image_url = (
+            image_url is not None
+            and transition_type == TRANSITION_CONTINUE
+        )
 
+        if use_image_url:
             model = args.image_model
-            payload = make_payload(
-                prompt=full_prompt,
-                duration=args.duration,
-                image_url=image_url,
-                resolution=args.resolution,
-                fps=args.fps,
-                generate_audio=generate_audio,
-                negative_prompt=negative_prompt,
-                seed=args.seed,
-                payload_style=payload_style,
-            )
+        else:
+            if not image_url and not args.dry_run and transition_type == TRANSITION_CONTINUE:
+                die("No image_url available. Use --initial-image or --first-text-to-video.")
+            model = args.text_model
+
+        payload = make_payload(
+            prompt=full_prompt,
+            duration=args.duration,
+            image_url=image_url if use_image_url else None,
+            resolution=args.resolution,
+            fps=args.fps,
+            generate_audio=generate_audio,
+            negative_prompt=negative_prompt,
+            seed=args.seed,
+            payload_style=payload_style,
+        )
 
         label = f"{i}/{total}" if total else str(i)
         print(f"\n=== ITERATION {label} ===")
-        print(f"Raw action: {raw_action}")
-        print(f"Transition: {transition}")
-        print(f"Prompt chars: {len(full_prompt)}")
+        print(f"Raw action:       {raw_action}")
+        print(f"Transition type:  {transition_type}  ({'text-to-video' if not use_image_url else 'image-to-video'})")
+        print(f"Transition:       {transition}")
+        print(f"Prompt chars:     {len(full_prompt)}")
         print(f"Full prompt saved to: {full_prompt_path}")
 
         if args.dry_run:
             print("\n[DRY RUN] Payload:")
             print(json.dumps(payload, indent=2, ensure_ascii=False))
+            prompt_history.append(raw_action)
             i += 1
             continue
 
