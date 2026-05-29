@@ -737,7 +737,7 @@ def main() -> None:
         print(f"  image: {args.image_model}")
 
     if args.max_prompt_chars is None:
-        args.max_prompt_chars = 5000 if payload_style in ("ltx", "wan") else 8000
+        args.max_prompt_chars = {"ltx": 5000, "wan": 5000, "kling": 2500}.get(payload_style, 8000)
 
     require_ffmpeg()
     validate_generation_args(args.duration, args.fps, payload_style)
