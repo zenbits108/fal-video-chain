@@ -663,7 +663,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--negative-file", default="negative_prompt.txt")
 
     parser.add_argument("--history-depth", type=int, default=3)
-    parser.add_argument("--max-prompt-chars", type=int, default=8000)
+    parser.add_argument("--max-prompt-chars", type=int, default=None,
+                        help="Max prompt length in characters. Defaults to 5000 for LTX/Wan, 8000 for others.")
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--sleep", type=float, default=2.0)
 
@@ -734,6 +735,9 @@ def main() -> None:
         print(f"Model preset: {args.model}  (style={payload_style})")
         print(f"  text:  {args.text_model}")
         print(f"  image: {args.image_model}")
+
+    if args.max_prompt_chars is None:
+        args.max_prompt_chars = 5000 if payload_style in ("ltx", "wan") else 8000
 
     require_ffmpeg()
     validate_generation_args(args.duration, args.fps, payload_style)
